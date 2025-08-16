@@ -1,14 +1,12 @@
 {
   "domain": "n8n_monitor",
   "name": "n8n Monitor",
-  "version": "1.1.0",
   "codeowners": ["@pages"],
   "config_flow": true,
+  "dependencies": [],
   "documentation": "https://github.com/pages/ha-n8n-monitor",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/pages/ha-n8n-monitor/issues",
   "requirements": [],
-  "dependencies": [],
-  "iot_class": "cloud_polling",
-  "integration_type": "device",
-  "manufacturer": "Pages in Korea (pages.kr)"
+  "version": "1.1.0"
 }

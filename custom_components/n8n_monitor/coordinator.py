@@ -22,6 +22,22 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def parse_datetime(dt_string: str | None) -> datetime | None:
+    """Parse datetime string to datetime object."""
+    if not dt_string:
+        return None
+    
+    try:
+        # Handle various datetime formats
+        if dt_string.endswith('Z'):
+            return datetime.fromisoformat(dt_string.replace('Z', '+00:00'))
+        else:
+            return datetime.fromisoformat(dt_string)
+    except (ValueError, AttributeError):
+        _LOGGER.warning("Failed to parse datetime: %s", dt_string)
+        return None
+
+
 class N8nWorkflowsCoordinator(DataUpdateCoordinator):
     """Coordinator for n8n workflows data."""
     
@@ -75,23 +91,21 @@ class N8nWorkflowsCoordinator(DataUpdateCoordinator):
                 if executions and executions.get("data"):
                     for execution in executions["data"]:
                         # Parse execution time
-                        started_at = execution.get("startedAt")
-                        if started_at:
-                            exec_time = datetime.fromisoformat(
-                                started_at.replace("Z", "+00:00")
-                            )
-                            
-                            # Update last execution time
-                            if last_execution_time is None or exec_time > last_execution_time:
-                                last_execution_time = exec_time
-                            
-                            # Count if within window
-                            if exec_time >= window_start:
-                                status = execution.get("status", STATUS_UNKNOWN)
-                                if status in recent_counts:
-                                    recent_counts[status] += 1
-                                else:
-                                    recent_counts[STATUS_UNKNOWN] += 1
+                        exec_time = parse_datetime(execution.get("startedAt"))
+                        if not exec_time:
+                            continue
+                        
+                        # Update last execution time
+                        if last_execution_time is None or exec_time > last_execution_time:
+                            last_execution_time = exec_time
+                        
+                        # Count if within window
+                        if exec_time >= window_start:
+                            status = execution.get("status", STATUS_UNKNOWN)
+                            if status in recent_counts:
+                                recent_counts[status] += 1
+                            else:
+                                recent_counts[STATUS_UNKNOWN] += 1
                 
                 # Add processed workflow
                 processed_workflows.append({
@@ -168,13 +182,9 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
                 should_continue = False
                 for execution in result["data"]:
                     # Parse execution time
-                    started_at = execution.get("startedAt")
-                    if not started_at:
+                    exec_time = parse_datetime(execution.get("startedAt"))
+                    if not exec_time:
                         continue
-                    
-                    exec_time = datetime.fromisoformat(
-                        started_at.replace("Z", "+00:00")
-                    )
                     
                     # Check if within window
                     if exec_time < window_start:
@@ -190,24 +200,26 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
                     
                     # Calculate duration
                     duration_ms = None
-                    if execution.get("stoppedAt"):
-                        stopped_at = datetime.fromisoformat(
-                            execution["stoppedAt"].replace("Z", "+00:00")
-                        )
+                    stopped_at = parse_datetime(execution.get("stoppedAt"))
+                    if stopped_at and exec_time:
                         duration_ms = int((stopped_at - exec_time).total_seconds() * 1000)
                     
                     # Add to appropriate list
                     exec_data = {
                         "id": execution.get("id"),
                         "workflowId": execution.get("workflowId"),
-                        "startedAt": started_at,
+                        "startedAt": execution.get("startedAt"),
                         "finishedAt": execution.get("stoppedAt"),
                         "duration_ms": duration_ms,
                     }
                     
                     # Add error message for failed executions
                     if status == STATUS_ERROR:
-                        error_msg = execution.get("error", {}).get("message", "Unknown error")
+                        error_msg = "Unknown error"
+                        if isinstance(execution.get("error"), dict):
+                            error_msg = execution["error"].get("message", "Unknown error")
+                        elif isinstance(execution.get("error"), str):
+                            error_msg = execution["error"]
                         exec_data["error"] = error_msg
                     
                     executions_by_status[status].append(exec_data)

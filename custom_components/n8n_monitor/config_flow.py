@@ -10,7 +10,6 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
@@ -26,46 +25,14 @@ from .const import (
     DEFAULT_PAGE_SIZE,
     DEFAULT_ATTR_LIMIT,
 )
-from .api import N8nApi
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
-
-
-class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""
-
-
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect."""
-    api = N8nApi(
-        url=data[CONF_URL],
-        api_key=data[CONF_API_KEY]
-    )
-    
-    # Test connection
-    if not await api.test_connection():
-        raise CannotConnect
-    
-    # Return info to use in the config entry
-    return {"title": data.get(CONF_DEVICE_NAME, f"n8n ({data[CONF_URL]})")}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for n8n Monitor."""
     
     VERSION = 1
-    
-    @staticmethod
-    @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> config_entries.OptionsFlow:
-        """Get the options flow for this handler."""
-        return OptionsFlowHandler(config_entry)
     
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -74,43 +41,60 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         
         if user_input is not None:
+            # Import api module here to avoid circular imports
+            from .api import N8nApi
+            
             try:
-                info = await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-            else:
-                # Create unique ID based on URL and API key
-                await self.async_set_unique_id(
-                    f"{user_input[CONF_URL]}_{user_input[CONF_API_KEY][:8]}"
+                # Test connection
+                api = N8nApi(
+                    url=user_input[CONF_URL],
+                    api_key=user_input[CONF_API_KEY]
                 )
-                self._abort_if_unique_id_configured()
                 
-                return self.async_create_entry(
-                    title=info["title"],
-                    data=user_input,
-                    options={
-                        CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
-                        CONF_WINDOW_HOURS: DEFAULT_WINDOW_HOURS,
-                        CONF_PAGE_SIZE: DEFAULT_PAGE_SIZE,
-                        CONF_ATTR_LIMIT: DEFAULT_ATTR_LIMIT,
-                    }
-                )
+                if not await api.test_connection():
+                    errors["base"] = "cannot_connect"
+                else:
+                    # Create unique ID based on URL and API key
+                    await self.async_set_unique_id(
+                        f"{user_input[CONF_URL]}_{user_input[CONF_API_KEY][:8]}"
+                    )
+                    self._abort_if_unique_id_configured()
+                    
+                    # Get title
+                    title = user_input.get(CONF_DEVICE_NAME) or f"n8n ({user_input[CONF_URL]})"
+                    
+                    return self.async_create_entry(
+                        title=title,
+                        data=user_input,
+                        options={
+                            CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+                            CONF_WINDOW_HOURS: DEFAULT_WINDOW_HOURS,
+                            CONF_PAGE_SIZE: DEFAULT_PAGE_SIZE,
+                            CONF_ATTR_LIMIT: DEFAULT_ATTR_LIMIT,
+                        }
+                    )
+            except Exception as err:
+                _LOGGER.exception("Unexpected exception: %s", err)
+                errors["base"] = "unknown"
         
         # Show form
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
-                vol.Required(CONF_URL): cv.url,
-                vol.Required(CONF_API_KEY): cv.string,
-                vol.Optional(CONF_DEVICE_NAME): cv.string,
+                vol.Required(CONF_URL): str,
+                vol.Required(CONF_API_KEY): str,
+                vol.Optional(CONF_DEVICE_NAME): str,
             }),
             errors=errors,
         )
+    
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):

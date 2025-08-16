@@ -5,7 +5,6 @@ import logging
 from typing import Any
 
 import aiohttp
-import async_timeout
 
 from .const import API_V1_BASE, API_REST_BASE
 
@@ -19,18 +18,6 @@ class N8nApi:
         """Initialize the API client."""
         self.url = url.rstrip("/")
         self.api_key = api_key
-        self._session: aiohttp.ClientSession | None = None
-    
-    async def _ensure_session(self) -> aiohttp.ClientSession:
-        """Ensure we have an active session."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
-    
-    async def close(self) -> None:
-        """Close the session."""
-        if self._session and not self._session.closed:
-            await self._session.close()
     
     async def _request(
         self,
@@ -40,7 +27,6 @@ class N8nApi:
         fallback_endpoint: str | None = None,
     ) -> dict[str, Any] | list[dict[str, Any]] | None:
         """Make a request to the API."""
-        session = await self._ensure_session()
         headers = {
             "X-N8N-API-KEY": self.api_key,
             "Accept": "application/json",
@@ -48,8 +34,10 @@ class N8nApi:
         
         url = f"{self.url}{endpoint}"
         
+        timeout = aiohttp.ClientTimeout(total=30)
+        
         try:
-            async with async_timeout.timeout(30):
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.request(
                     method, url, headers=headers, params=params
                 ) as response:

@@ -22,8 +22,6 @@ from .const import (
     CONF_WINDOW_HOURS,
     CONF_PAGE_SIZE,
     CONF_ATTR_LIMIT,
-    DATA_COORDINATOR_WORKFLOWS,
-    DATA_COORDINATOR_EXECUTIONS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_WINDOW_HOURS,
     DEFAULT_PAGE_SIZE,
@@ -65,12 +63,6 @@ async def async_setup_entry(
         attr_limit,
         timedelta(seconds=scan_interval),
     )
-    
-    # Store coordinators
-    hass.data[DOMAIN][config_entry.entry_id] = {
-        DATA_COORDINATOR_WORKFLOWS: workflows_coordinator,
-        DATA_COORDINATOR_EXECUTIONS: executions_coordinator,
-    }
     
     # Fetch initial data
     await workflows_coordinator.async_config_entry_first_refresh()
