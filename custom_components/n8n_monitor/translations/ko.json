@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "n8n 연결",
+        "description": "n8n Monitor 통합 설정",
+        "data": {
+          "url": "n8n API URL",
+          "api_key": "API 키",
+          "device_name": "기기 이름 (선택사항)"
+        },
+        "data_description": {
+          "url": "n8n 인스턴스의 URL (예: https://n8n.example.com)",
+          "api_key": "n8n API 키 (X-N8N-API-KEY)",
+          "device_name": "이 n8n 인스턴스의 사용자 정의 이름 (예: n8n-Prod-SG)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "n8n에 연결할 수 없습니다. URL과 API 키를 확인해주세요.",
+      "invalid_auth": "잘못된 인증",
+      "unknown": "예기치 않은 오류가 발생했습니다"
+    },
+    "abort": {
+      "already_configured": "이 n8n 인스턴스는 이미 구성되어 있습니다"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "n8n Monitor 옵션",
+        "description": "n8n Monitor 설정 구성",
+        "data": {
+          "scan_interval": "업데이트 간격 (초)",
+          "window_hours": "실행 창 (시간)",
+          "page_size": "API 요청 페이지 크기",
+          "attr_limit": "속성 최대 항목 수"
+        },
+        "data_description": {
+          "scan_interval": "n8n에서 데이터를 업데이트하는 빈도 (60-3600초)",
+          "window_hours": "실행 통계 시간 창 (1-168시간)",
+          "page_size": "API 요청당 항목 수 (10-500)",
+          "attr_limit": "속성에 저장할 최대 실행 항목 수 (10-200)"
+        }
+      }
+    }
+  }
+}
