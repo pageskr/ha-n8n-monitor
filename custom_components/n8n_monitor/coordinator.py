@@ -65,18 +65,33 @@ class N8nWorkflowsCoordinator(DataUpdateCoordinator):
             if workflows is None:
                 raise UpdateFailed("Failed to fetch workflows")
             
+            _LOGGER.debug("Fetched %d workflows", len(workflows))
+            
             # Get current time and window start in UTC
             now = datetime.now(timezone.utc)
             window_start = now - timedelta(hours=self.window_hours)
             
+            # First, get all recent executions in one call
+            all_executions = await self.api.get_executions(limit=250)
+            
+            # Create a map of workflow_id to executions
+            executions_by_workflow = defaultdict(list)
+            if all_executions and all_executions.get("data"):
+                for execution in all_executions["data"]:
+                    workflow_id = execution.get("workflowId")
+                    if workflow_id:
+                        executions_by_workflow[workflow_id].append(execution)
+            
+            _LOGGER.debug("Grouped executions for %d workflows", len(executions_by_workflow))
+            
             # Process workflows
             processed_workflows = []
             for workflow in workflows:
-                # Get recent executions for this workflow
-                executions = await self.api.get_executions(
-                    workflow_id=workflow.get("id"),
-                    limit=100,
-                )
+                workflow_id = workflow.get("id")
+                workflow_name = workflow.get("name", "Unknown")
+                
+                # Get executions for this workflow
+                workflow_executions = executions_by_workflow.get(workflow_id, [])
                 
                 recent_counts = {
                     STATUS_SUCCESS: 0,
@@ -88,45 +103,48 @@ class N8nWorkflowsCoordinator(DataUpdateCoordinator):
                 
                 last_execution_time = None
                 
-                if executions and executions.get("data"):
-                    for execution in executions["data"]:
-                        # Parse execution time
-                        exec_time = parse_datetime(execution.get("startedAt"))
-                        if not exec_time:
-                            continue
-                        
-                        # Update last execution time
-                        if last_execution_time is None or exec_time > last_execution_time:
-                            last_execution_time = exec_time
-                        
-                        # Count if within window
-                        if exec_time >= window_start:
-                            status = execution.get("status", STATUS_UNKNOWN)
-                            if status in recent_counts:
-                                recent_counts[status] += 1
-                            else:
-                                recent_counts[STATUS_UNKNOWN] += 1
+                for execution in workflow_executions:
+                    # Parse execution time
+                    exec_time = parse_datetime(execution.get("startedAt"))
+                    if not exec_time:
+                        continue
+                    
+                    # Update last execution time
+                    if last_execution_time is None or exec_time > last_execution_time:
+                        last_execution_time = exec_time
+                    
+                    # Count if within window
+                    if exec_time >= window_start:
+                        status = execution.get("status", STATUS_UNKNOWN)
+                        if status in recent_counts:
+                            recent_counts[status] += 1
+                        else:
+                            recent_counts[STATUS_UNKNOWN] += 1
                 
                 # Add processed workflow
-                processed_workflows.append({
-                    "id": workflow.get("id"),
-                    "name": workflow.get("name"),
+                processed_workflow = {
+                    "id": workflow_id,
+                    "name": workflow_name,
                     "active": workflow.get("active", False),
                     "last_execution_time": (
                         last_execution_time.isoformat() if last_execution_time else None
                     ),
                     "recent_execution": recent_counts,
-                })
+                }
+                processed_workflows.append(processed_workflow)
             
-            return {
+            result = {
                 "items": processed_workflows,
                 "total": len(processed_workflows),
                 "generated_at": now.isoformat(),
                 "execution_hours": self.window_hours,
             }
-        
+            
+            _LOGGER.debug("Returning workflow data with %d items", len(processed_workflows))
+            return result
+            
         except Exception as err:
-            _LOGGER.error("Error updating workflows data: %s", err)
+            _LOGGER.error("Error updating workflows data: %s", err, exc_info=True)
             raise UpdateFailed(f"Error communicating with API: {err}") from err
 
 
@@ -169,6 +187,8 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
             pages_fetched = 0
             max_pages = 20  # Safety limit
             
+            _LOGGER.debug("Starting to fetch executions with window %d hours", self.window_hours)
+            
             while pages_fetched < max_pages:
                 result = await self.api.get_executions(
                     limit=self.page_size,
@@ -176,7 +196,10 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
                 )
                 
                 if not result or not result.get("data"):
+                    _LOGGER.debug("No more executions to fetch")
                     break
+                
+                _LOGGER.debug("Fetched %d executions on page %d", len(result["data"]), pages_fetched + 1)
                 
                 # Process executions
                 should_continue = False
@@ -189,6 +212,7 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
                     # Check if within window
                     if exec_time < window_start:
                         # Executions are sorted by time, so we can stop here
+                        _LOGGER.debug("Reached executions outside window, stopping pagination")
                         break
                     
                     should_continue = True
@@ -263,11 +287,14 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
                 for status in [STATUS_SUCCESS, STATUS_ERROR, STATUS_RUNNING, STATUS_CANCELED, STATUS_UNKNOWN]
             )
             
-            return {
+            result = {
                 "total": total,
                 **final_data,
             }
-        
+            
+            _LOGGER.debug("Returning execution data with total %d", total)
+            return result
+            
         except Exception as err:
-            _LOGGER.error("Error updating executions data: %s", err)
+            _LOGGER.error("Error updating executions data: %s", err, exc_info=True)
             raise UpdateFailed(f"Error communicating with API: {err}") from err

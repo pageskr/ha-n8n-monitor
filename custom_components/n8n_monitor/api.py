@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 import ssl
+from urllib.parse import urlparse
 
 import aiohttp
 import certifi
@@ -28,13 +29,22 @@ class N8nApi:
         self.api_key = api_key
         self.verify_ssl = verify_ssl
         self.timeout = timeout
+        
+        # Parse URL to check if it's HTTP or HTTPS
+        parsed_url = urlparse(self.url)
+        self.is_https = parsed_url.scheme == "https"
     
-    def _get_ssl_context(self) -> ssl.SSLContext | bool:
+    def _get_ssl_context(self) -> ssl.SSLContext | bool | None:
         """Get SSL context based on verify_ssl setting."""
+        # For HTTP connections, no SSL context is needed
+        if not self.is_https:
+            return None
+            
+        # For HTTPS with SSL verification disabled
         if not self.verify_ssl:
             return False
         
-        # Create SSL context with certificate verification
+        # For HTTPS with SSL verification enabled
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         return ssl_context
     
@@ -59,11 +69,17 @@ class N8nApi:
         # Get SSL context
         ssl_context = self._get_ssl_context()
         
-        # Create connector with SSL settings
-        connector = aiohttp.TCPConnector(
-            ssl=ssl_context,
-            force_close=True,
-        )
+        # Create connector with appropriate settings
+        if self.is_https:
+            connector = aiohttp.TCPConnector(
+                ssl=ssl_context,
+                force_close=True,
+            )
+        else:
+            # For HTTP, use a simple connector without SSL
+            connector = aiohttp.TCPConnector(
+                force_close=True,
+            )
         
         try:
             async with aiohttp.ClientSession(
@@ -76,7 +92,9 @@ class N8nApi:
                     method, url, headers=headers, params=params
                 ) as response:
                     if response.status == 200:
-                        return await response.json()
+                        data = await response.json()
+                        _LOGGER.debug("Response received: %s", type(data))
+                        return data
                     elif response.status == 404 and fallback_endpoint:
                         # Try fallback endpoint (REST API)
                         fallback_url = f"{self.url}{fallback_endpoint}"
@@ -86,7 +104,9 @@ class N8nApi:
                             method, fallback_url, headers=headers, params=params
                         ) as fallback_response:
                             if fallback_response.status == 200:
-                                return await fallback_response.json()
+                                data = await fallback_response.json()
+                                _LOGGER.debug("Fallback response received: %s", type(data))
+                                return data
                     
                     _LOGGER.error(
                         "Request failed: %s %s - Status: %s",
@@ -94,6 +114,11 @@ class N8nApi:
                         url,
                         response.status,
                     )
+                    try:
+                        error_text = await response.text()
+                        _LOGGER.error("Error response: %s", error_text)
+                    except:
+                        pass
                     return None
                     
         except aiohttp.ClientError as err:
@@ -125,9 +150,13 @@ class N8nApi:
         )
         
         if isinstance(result, dict) and "data" in result:
+            _LOGGER.debug("Workflows data found in 'data' field")
             return result["data"]
         elif isinstance(result, list):
+            _LOGGER.debug("Workflows returned as list")
             return result
+        
+        _LOGGER.warning("No workflows data found in response")
         return None
     
     async def get_executions(
