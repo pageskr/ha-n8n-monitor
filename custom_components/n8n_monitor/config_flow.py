@@ -36,6 +36,9 @@ _LOGGER = logging.getLogger(__name__)
 
 def validate_url(url: str) -> str:
     """Validate and normalize URL."""
+    # Remove whitespace
+    url = url.strip()
+    
     # Parse URL
     parsed = urlparse(url)
     
@@ -51,11 +54,25 @@ def validate_url(url: str) -> str:
     if not parsed.netloc:
         raise vol.Invalid("Invalid URL format")
     
+    # Check if the URL looks like it has the port in the wrong place
+    if ":" in parsed.netloc:
+        # This is correct - hostname:port format
+        parts = parsed.netloc.split(":")
+        if len(parts) == 2:
+            hostname, port = parts
+            try:
+                port_num = int(port)
+                if port_num < 1 or port_num > 65535:
+                    raise vol.Invalid(f"Invalid port number: {port}")
+            except ValueError:
+                raise vol.Invalid(f"Invalid port number: {port}")
+    
     # Reconstruct URL to ensure it's properly formatted
     base_url = f"{parsed.scheme}://{parsed.netloc}"
     if parsed.path:
         base_url += parsed.path.rstrip("/")
     
+    _LOGGER.debug("Validated URL: %s", base_url)
     return base_url
 
 
@@ -79,6 +96,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 url = validate_url(user_input[CONF_URL])
                 user_input[CONF_URL] = url
                 
+                _LOGGER.debug("Testing connection to %s", url)
+                
                 # Test connection
                 api = N8nApi(
                     url=user_input[CONF_URL],
@@ -89,6 +108,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 
                 if not await api.test_connection():
                     errors["base"] = "cannot_connect"
+                    _LOGGER.error("Failed to connect to n8n at %s", url)
                 else:
                     # Create unique ID based on URL and API key
                     await self.async_set_unique_id(
@@ -112,6 +132,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
             except vol.Invalid as err:
                 errors["url"] = str(err)
+                _LOGGER.error("URL validation error: %s", err)
             except Exception as err:
                 _LOGGER.exception("Unexpected exception: %s", err)
                 errors["base"] = "unknown"
@@ -126,6 +147,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): bool,
             }),
             errors=errors,
+            description_placeholders={
+                "url_example": "http://n8n:5678 or https://n8n.example.com",
+            },
         )
     
     @staticmethod
