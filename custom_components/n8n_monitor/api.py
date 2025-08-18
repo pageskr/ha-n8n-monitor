@@ -5,7 +5,6 @@ import logging
 from typing import Any
 import ssl
 from urllib.parse import urlparse
-import socket
 
 import aiohttp
 import certifi
@@ -35,31 +34,7 @@ class N8nApi:
         parsed_url = urlparse(self.url)
         self.is_https = parsed_url.scheme == "https"
         
-        _LOGGER.debug("Initialized N8nApi with URL: %s (HTTPS: %s)", self.url, self.is_https)
-    
-    def _get_connector(self) -> aiohttp.TCPConnector:
-        """Get appropriate connector based on URL scheme."""
-        connector_kwargs = {
-            "force_close": True,
-            "enable_cleanup_closed": True,
-        }
-        
-        if self.is_https:
-            if self.verify_ssl:
-                # HTTPS with SSL verification
-                ssl_context = ssl.create_default_context(cafile=certifi.where())
-                connector_kwargs["ssl"] = ssl_context
-            else:
-                # HTTPS without SSL verification
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-                connector_kwargs["ssl"] = ssl_context
-        else:
-            # HTTP - explicitly disable SSL
-            connector_kwargs["ssl"] = False
-        
-        return aiohttp.TCPConnector(**connector_kwargs)
+        _LOGGER.info("Initialized N8nApi with URL: %s (HTTPS: %s)", self.url, self.is_https)
     
     async def _request(
         self,
@@ -77,33 +52,38 @@ class N8nApi:
         
         url = f"{self.url}{endpoint}"
         
-        # Parse URL for debugging
-        parsed = urlparse(url)
-        _LOGGER.debug("Parsed URL - scheme: %s, netloc: %s, path: %s", 
-                     parsed.scheme, parsed.netloc, parsed.path)
+        _LOGGER.info("Making %s request to %s", method, url)
         
         # Create timeout
-        timeout = aiohttp.ClientTimeout(total=self.timeout, connect=30)
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
         
-        # Get appropriate connector
-        connector = self._get_connector()
+        # Configure connector based on protocol
+        if self.is_https:
+            # HTTPS - handle SSL
+            if self.verify_ssl:
+                ssl_context = ssl.create_default_context(cafile=certifi.where())
+            else:
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+            
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+        else:
+            # HTTP - no SSL, basic connector
+            connector = aiohttp.TCPConnector(ssl=False)
         
         try:
             async with aiohttp.ClientSession(
                 timeout=timeout,
                 connector=connector,
-                trust_env=True,  # Trust system proxy settings
             ) as session:
-                _LOGGER.debug("Making %s request to %s", method, url)
-                
                 async with session.request(
                     method, 
                     url, 
                     headers=headers, 
                     params=params,
-                    ssl=False if not self.is_https else None,
                 ) as response:
-                    _LOGGER.debug("Response status: %s", response.status)
+                    _LOGGER.info("Response status: %s", response.status)
                     
                     if response.status == 200:
                         data = await response.json()
@@ -112,14 +92,13 @@ class N8nApi:
                     elif response.status == 404 and fallback_endpoint:
                         # Try fallback endpoint (REST API)
                         fallback_url = f"{self.url}{fallback_endpoint}"
-                        _LOGGER.debug("Trying fallback URL: %s", fallback_url)
+                        _LOGGER.info("Trying fallback URL: %s", fallback_url)
                         
                         async with session.request(
                             method, 
                             fallback_url, 
                             headers=headers, 
                             params=params,
-                            ssl=False if not self.is_https else None,
                         ) as fallback_response:
                             if fallback_response.status == 200:
                                 data = await fallback_response.json()
@@ -142,18 +121,9 @@ class N8nApi:
                         pass
                     return None
                     
-        except aiohttp.ClientConnectorError as err:
-            _LOGGER.error("Connection error for URL %s: %s (Host: %s)", 
-                         url, err, err.host)
-            # Try to provide more specific error information
-            if hasattr(err, 'os_error') and isinstance(err.os_error, socket.gaierror):
-                _LOGGER.error("DNS resolution failed for hostname: %s", parsed.netloc)
-            return None
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Client error for URL %s: %s", url, err)
-            return None
         except Exception as err:
-            _LOGGER.error("Unexpected error for URL %s: %s", url, err, exc_info=True)
+            _LOGGER.error("Request error for URL %s: %s", url, str(err))
+            _LOGGER.error("Error type: %s", type(err).__name__)
             return None
     
     async def test_connection(self) -> bool:
