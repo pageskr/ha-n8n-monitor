@@ -105,7 +105,7 @@ class N8nBaseSensor(CoordinatorEntity, SensorEntity):
             manufacturer=MANUFACTURER,
             model="n8n Workflow Automation",
             sw_version=DEVICE_SW_VERSION,
-            configuration_url="https://github.com/pages/ha-n8n-monitor",
+            configuration_url="https://github.com/pageskr/ha-n8n-monitor",
         )
 
 

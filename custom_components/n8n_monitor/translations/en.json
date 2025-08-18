@@ -7,19 +7,22 @@
         "data": {
           "url": "n8n API URL",
           "api_key": "API Key",
-          "device_name": "Device name (optional)"
+          "device_name": "Device name (optional)",
+          "verify_ssl": "Verify SSL certificate"
         },
         "data_description": {
-          "url": "The URL of your n8n instance (e.g., https://n8n.example.com)",
+          "url": "The URL of your n8n instance (e.g., http://n8n:5678 or https://n8n.example.com)",
           "api_key": "Your n8n API key (X-N8N-API-KEY)",
-          "device_name": "Custom name for this n8n instance (e.g., n8n-Prod-SG)"
+          "device_name": "Custom name for this n8n instance (e.g., n8n-Prod-SG)",
+          "verify_ssl": "Whether to verify SSL certificates. Disable for self-signed certificates."
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to n8n. Please check the URL and API key.",
       "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error occurred"
+      "unknown": "Unexpected error occurred",
+      "url": "Invalid URL format. Must include protocol (http:// or https://)"
     },
     "abort": {
       "already_configured": "This n8n instance is already configured"
@@ -34,13 +37,17 @@
           "scan_interval": "Update interval (seconds)",
           "window_hours": "Execution window (hours)",
           "page_size": "Page size for API requests",
-          "attr_limit": "Maximum items in attributes"
+          "attr_limit": "Maximum items in attributes",
+          "request_timeout": "Request timeout (seconds)",
+          "verify_ssl": "Verify SSL certificate"
         },
         "data_description": {
           "scan_interval": "How often to update data from n8n (60-3600 seconds)",
           "window_hours": "Time window for execution statistics (1-168 hours)",
           "page_size": "Number of items per API request (10-500)",
-          "attr_limit": "Maximum number of execution items to store in attributes (10-200)"
+          "attr_limit": "Maximum number of execution items to store in attributes (10-200)",
+          "request_timeout": "API request timeout in seconds (10-300)",
+          "verify_ssl": "Whether to verify SSL certificates. Disable for self-signed certificates."
         }
       }
     }

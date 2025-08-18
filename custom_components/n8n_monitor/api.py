@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+import ssl
 
 import aiohttp
+import certifi
 
 from .const import API_V1_BASE, API_REST_BASE
 
@@ -14,10 +16,27 @@ _LOGGER = logging.getLogger(__name__)
 class N8nApi:
     """n8n API client."""
     
-    def __init__(self, url: str, api_key: str) -> None:
+    def __init__(
+        self, 
+        url: str, 
+        api_key: str,
+        verify_ssl: bool = True,
+        timeout: int = 60,
+    ) -> None:
         """Initialize the API client."""
         self.url = url.rstrip("/")
         self.api_key = api_key
+        self.verify_ssl = verify_ssl
+        self.timeout = timeout
+    
+    def _get_ssl_context(self) -> ssl.SSLContext | bool:
+        """Get SSL context based on verify_ssl setting."""
+        if not self.verify_ssl:
+            return False
+        
+        # Create SSL context with certificate verification
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        return ssl_context
     
     async def _request(
         self,
@@ -34,10 +53,25 @@ class N8nApi:
         
         url = f"{self.url}{endpoint}"
         
-        timeout = aiohttp.ClientTimeout(total=30)
+        # Create timeout
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        
+        # Get SSL context
+        ssl_context = self._get_ssl_context()
+        
+        # Create connector with SSL settings
+        connector = aiohttp.TCPConnector(
+            ssl=ssl_context,
+            force_close=True,
+        )
         
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with aiohttp.ClientSession(
+                timeout=timeout,
+                connector=connector,
+            ) as session:
+                _LOGGER.debug("Making request to %s", url)
+                
                 async with session.request(
                     method, url, headers=headers, params=params
                 ) as response:
@@ -46,6 +80,8 @@ class N8nApi:
                     elif response.status == 404 and fallback_endpoint:
                         # Try fallback endpoint (REST API)
                         fallback_url = f"{self.url}{fallback_endpoint}"
+                        _LOGGER.debug("Trying fallback URL: %s", fallback_url)
+                        
                         async with session.request(
                             method, fallback_url, headers=headers, params=params
                         ) as fallback_response:
@@ -59,6 +95,7 @@ class N8nApi:
                         response.status,
                     )
                     return None
+                    
         except aiohttp.ClientError as err:
             _LOGGER.error("Request error: %s", err)
             return None

@@ -1,7 +1,7 @@
 # n8n Monitor for Home Assistant
 
-[![GitHub Release](https://img.shields.io/github/v/release/pages/ha-n8n-monitor)](https://github.com/pages/ha-n8n-monitor/releases)
-[![License](https://img.shields.io/github/license/pages/ha-n8n-monitor)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/pageskr/ha-n8n-monitor)](https://github.com/pageskr/ha-n8n-monitor/releases)
+[![License](https://img.shields.io/github/license/pageskr/ha-n8n-monitor)](LICENSE)
 
 n8n 워크플로우 자동화 플랫폼을 Home Assistant에서 모니터링하는 커스텀 통합입니다.
 
@@ -10,7 +10,8 @@ n8n 워크플로우 자동화 플랫폼을 Home Assistant에서 모니터링하�
 - **복수 n8n 서버 지원**: 여러 n8n 인스턴스를 동시에 모니터링
 - **실시간 모니터링**: 워크플로우 상태 및 실행 통계
 - **상세한 실행 로그**: 성공/실패/진행중/취소된 실행 추적
-- **커스터마이징 가능**: 수집 주기, 시간 창, 데이터 제한 설정
+- **유연한 연결 옵션**: HTTP/HTTPS, 포트 지정, SSL 검증 옵션
+- **커스터마이징 가능**: 수집 주기, 시간 창, 데이터 제한, 타임아웃 설정
 - **한국어/영어 지원**: 다국어 UI 제공
 
 ## 설치 방법
@@ -18,7 +19,7 @@ n8n 워크플로우 자동화 플랫폼을 Home Assistant에서 모니터링하�
 ### HACS를 통한 설치 (권장)
 
 1. HACS에서 "Custom repositories" 추가
-2. Repository URL: `https://github.com/pages/ha-n8n-monitor`
+2. Repository URL: `https://github.com/pageskr/ha-n8n-monitor`
 3. Category: `Integration` 선택
 4. 설치 후 Home Assistant 재시작
 
@@ -33,9 +34,12 @@ n8n 워크플로우 자동화 플랫폼을 Home Assistant에서 모니터링하�
 1. Home Assistant 설정 → 기기 & 서비스 → 통합 추가
 2. "n8n Monitor" 검색 및 선택
 3. 필요한 정보 입력:
-   - **n8n API URL**: n8n 인스턴스 주소 (예: `https://n8n.example.com`)
+   - **n8n API URL**: n8n 인스턴스 주소 
+     - 예: `http://n8n:5678` (Docker 내부)
+     - 예: `https://n8n.example.com` (외부 도메인)
    - **API Key**: n8n API 키 (`X-N8N-API-KEY`)
    - **기기 이름**: 선택사항 (예: `n8n-Production`)
+   - **SSL 인증서 검증**: 자체 서명 인증서 사용 시 비활성화
 
 ## 센서
 
@@ -69,6 +73,8 @@ n8n 워크플로우 자동화 플랫폼을 Home Assistant에서 모니터링하�
 - **실행 창**: 1-168시간 (기본: 6시간)
 - **페이지 크기**: 10-500 (기본: 100)
 - **속성 최대 항목**: 10-200 (기본: 50)
+- **요청 타임아웃**: 10-300초 (기본: 60초)
+- **SSL 인증서 검증**: 활성/비활성 (기본: 활성)
 
 ## 대시보드 예제
 
@@ -154,27 +160,35 @@ automation:
 
 ## 보안 고려사항
 
-1. **HTTPS 사용**: n8n 인스턴스는 반드시 HTTPS를 사용해야 합니다
+1. **HTTPS 사용**: 외부 연결 시 HTTPS 사용을 권장합니다
 2. **API 키 보호**: API 키는 Home Assistant의 암호화된 저장소에 저장됩니다
 3. **최소 권한**: n8n API 키는 읽기 권한만 있으면 충분합니다
 4. **네트워크 보안**: Home Assistant에서 n8n으로의 아웃바운드 연결만 필요
+5. **SSL 인증서**: 자체 서명 인증서 사용 시 SSL 검증을 비활성화할 수 있습니다
 
 ## 문제 해결
 
 ### "Cannot connect" 오류
-- n8n URL이 올바른지 확인
+- n8n URL이 올바른지 확인 (프로토콜 포함: http:// 또는 https://)
 - API 키가 유효한지 확인
 - n8n 인스턴스가 실행 중인지 확인
 - 방화벽 설정 확인
+- DNS 해결 가능한지 확인 (Docker 내부 네트워크의 경우)
+
+### SSL 인증서 오류
+- 자체 서명 인증서 사용 시 "SSL 인증서 검증" 옵션 비활성화
+- 인증서가 만료되지 않았는지 확인
 
 ### 데이터가 표시되지 않음
 - n8n Public API가 활성화되어 있는지 확인
 - API 키에 충분한 권한이 있는지 확인
+- 타임아웃 설정 증가 (대량 데이터의 경우)
 
 ### 성능 문제
 - 업데이트 간격을 늘리기 (예: 300초 → 600초)
 - 속성 최대 항목 수 줄이기
 - 페이지 크기 조정
+- 요청 타임아웃 증가
 
 ## 라이선스
 

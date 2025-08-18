@@ -14,12 +14,16 @@ CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_WINDOW_HOURS: Final = "window_hours"
 CONF_PAGE_SIZE: Final = "page_size"
 CONF_ATTR_LIMIT: Final = "attr_limit"
+CONF_VERIFY_SSL: Final = "verify_ssl"
+CONF_REQUEST_TIMEOUT: Final = "request_timeout"
 
 # Default values
 DEFAULT_SCAN_INTERVAL: Final = 300  # 5 minutes
 DEFAULT_WINDOW_HOURS: Final = 6  # 6 hours
 DEFAULT_PAGE_SIZE: Final = 100
 DEFAULT_ATTR_LIMIT: Final = 50
+DEFAULT_VERIFY_SSL: Final = True
+DEFAULT_REQUEST_TIMEOUT: Final = 60  # 60 seconds
 
 # Data keys
 DATA_COORDINATOR_WORKFLOWS: Final = "coordinator_workflows"

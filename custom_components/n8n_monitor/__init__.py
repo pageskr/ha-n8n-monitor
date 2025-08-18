@@ -5,7 +5,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_VERIFY_SSL, CONF_REQUEST_TIMEOUT, DEFAULT_VERIFY_SSL, DEFAULT_REQUEST_TIMEOUT
 from .api import N8nApi
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
@@ -21,10 +21,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     hass.data.setdefault(DOMAIN, {})
     
+    # Get SSL verification setting (from data for initial setup, from options for updates)
+    verify_ssl = entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+    if CONF_VERIFY_SSL in entry.options:
+        verify_ssl = entry.options[CONF_VERIFY_SSL]
+    
+    # Get timeout setting
+    timeout = entry.options.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)
+    
     # Create API instance
     api = N8nApi(
         url=entry.data["url"],
-        api_key=entry.data["api_key"]
+        api_key=entry.data["api_key"],
+        verify_ssl=verify_ssl,
+        timeout=timeout,
     )
     
     # Store API instance

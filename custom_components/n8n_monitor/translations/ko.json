@@ -7,19 +7,22 @@
         "data": {
           "url": "n8n API URL",
           "api_key": "API 키",
-          "device_name": "기기 이름 (선택사항)"
+          "device_name": "기기 이름 (선택사항)",
+          "verify_ssl": "SSL 인증서 검증"
         },
         "data_description": {
-          "url": "n8n 인스턴스의 URL (예: https://n8n.example.com)",
+          "url": "n8n 인스턴스의 URL (예: http://n8n:5678 또는 https://n8n.example.com)",
           "api_key": "n8n API 키 (X-N8N-API-KEY)",
-          "device_name": "이 n8n 인스턴스의 사용자 정의 이름 (예: n8n-Prod-SG)"
+          "device_name": "이 n8n 인스턴스의 사용자 정의 이름 (예: n8n-Prod-SG)",
+          "verify_ssl": "SSL 인증서 검증 여부. 자체 서명 인증서의 경우 비활성화하세요."
         }
       }
     },
     "error": {
       "cannot_connect": "n8n에 연결할 수 없습니다. URL과 API 키를 확인해주세요.",
       "invalid_auth": "잘못된 인증",
-      "unknown": "예기치 않은 오류가 발생했습니다"
+      "unknown": "예기치 않은 오류가 발생했습니다",
+      "url": "잘못된 URL 형식입니다. 프로토콜(http:// 또는 https://)을 포함해야 합니다"
     },
     "abort": {
       "already_configured": "이 n8n 인스턴스는 이미 구성되어 있습니다"
@@ -34,13 +37,17 @@
           "scan_interval": "업데이트 간격 (초)",
           "window_hours": "실행 창 (시간)",
           "page_size": "API 요청 페이지 크기",
-          "attr_limit": "속성 최대 항목 수"
+          "attr_limit": "속성 최대 항목 수",
+          "request_timeout": "요청 시간 초과 (초)",
+          "verify_ssl": "SSL 인증서 검증"
         },
         "data_description": {
           "scan_interval": "n8n에서 데이터를 업데이트하는 빈도 (60-3600초)",
           "window_hours": "실행 통계 시간 창 (1-168시간)",
           "page_size": "API 요청당 항목 수 (10-500)",
-          "attr_limit": "속성에 저장할 최대 실행 항목 수 (10-200)"
+          "attr_limit": "속성에 저장할 최대 실행 항목 수 (10-200)",
+          "request_timeout": "API 요청 시간 초과 (10-300초)",
+          "verify_ssl": "SSL 인증서 검증 여부. 자체 서명 인증서의 경우 비활성화하세요."
         }
       }
     }

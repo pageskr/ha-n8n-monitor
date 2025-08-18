@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 import voluptuous as vol
 
@@ -20,13 +21,42 @@ from .const import (
     CONF_WINDOW_HOURS,
     CONF_PAGE_SIZE,
     CONF_ATTR_LIMIT,
+    CONF_VERIFY_SSL,
+    CONF_REQUEST_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_WINDOW_HOURS,
     DEFAULT_PAGE_SIZE,
     DEFAULT_ATTR_LIMIT,
+    DEFAULT_VERIFY_SSL,
+    DEFAULT_REQUEST_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def validate_url(url: str) -> str:
+    """Validate and normalize URL."""
+    # Parse URL
+    parsed = urlparse(url)
+    
+    # Check if scheme is present
+    if not parsed.scheme:
+        raise vol.Invalid("URL must include protocol (http:// or https://)")
+    
+    # Check if scheme is valid
+    if parsed.scheme not in ["http", "https"]:
+        raise vol.Invalid("URL must use http or https protocol")
+    
+    # Check if netloc is present (domain/IP and optional port)
+    if not parsed.netloc:
+        raise vol.Invalid("Invalid URL format")
+    
+    # Reconstruct URL to ensure it's properly formatted
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    if parsed.path:
+        base_url += parsed.path.rstrip("/")
+    
+    return base_url
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -45,10 +75,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             from .api import N8nApi
             
             try:
+                # Validate URL
+                url = validate_url(user_input[CONF_URL])
+                user_input[CONF_URL] = url
+                
                 # Test connection
                 api = N8nApi(
                     url=user_input[CONF_URL],
-                    api_key=user_input[CONF_API_KEY]
+                    api_key=user_input[CONF_API_KEY],
+                    verify_ssl=user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+                    timeout=DEFAULT_REQUEST_TIMEOUT,
                 )
                 
                 if not await api.test_connection():
@@ -71,8 +107,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             CONF_WINDOW_HOURS: DEFAULT_WINDOW_HOURS,
                             CONF_PAGE_SIZE: DEFAULT_PAGE_SIZE,
                             CONF_ATTR_LIMIT: DEFAULT_ATTR_LIMIT,
+                            CONF_REQUEST_TIMEOUT: DEFAULT_REQUEST_TIMEOUT,
                         }
                     )
+            except vol.Invalid as err:
+                errors["url"] = str(err)
             except Exception as err:
                 _LOGGER.exception("Unexpected exception: %s", err)
                 errors["base"] = "unknown"
@@ -84,6 +123,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_URL): str,
                 vol.Required(CONF_API_KEY): str,
                 vol.Optional(CONF_DEVICE_NAME): str,
+                vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): bool,
             }),
             errors=errors,
         )
@@ -138,5 +178,17 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_ATTR_LIMIT, DEFAULT_ATTR_LIMIT
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=10, max=200)),
+                vol.Optional(
+                    CONF_REQUEST_TIMEOUT,
+                    default=self.config_entry.options.get(
+                        CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=10, max=300)),
+                vol.Optional(
+                    CONF_VERIFY_SSL,
+                    default=self.config_entry.data.get(
+                        CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL
+                    ),
+                ): bool,
             }),
         )
