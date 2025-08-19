@@ -172,7 +172,8 @@ class N8nApi:
         """Get executions from n8n with pagination support."""
         params = {
             "limit": limit,
-            "includeData": "false",  # Don't include execution data
+            # Include minimal data to get workflow name and error info
+            "includeData": "true",
         }
         
         if status:
@@ -192,9 +193,19 @@ class N8nApi:
         if isinstance(result, dict):
             _LOGGER.debug("Executions returned as dict with %d items", 
                          len(result.get("data", [])))
+            # Log sample execution to debug status values
+            if result.get("data") and len(result["data"]) > 0:
+                sample = result["data"][0]
+                _LOGGER.debug("Sample execution - ID: %s, Status: %s, Started: %s", 
+                            sample.get("id"), sample.get("status"), sample.get("startedAt"))
             return result
         elif isinstance(result, list):
             _LOGGER.debug("Executions returned as list with %d items", len(result))
+            # Log sample execution to debug status values
+            if len(result) > 0:
+                sample = result[0]
+                _LOGGER.debug("Sample execution - ID: %s, Status: %s, Started: %s", 
+                            sample.get("id"), sample.get("status"), sample.get("startedAt"))
             # Convert list format to dict format for consistency
             return {
                 "data": result,

@@ -33,7 +33,7 @@ DATA_COORDINATOR_EXECUTIONS: Final = "coordinator_executions"
 API_V1_BASE: Final = "/api/v1"
 API_REST_BASE: Final = "/rest"
 
-# Execution statuses
+# Execution statuses (n8n internal status values)
 STATUS_SUCCESS: Final = "success"
 STATUS_ERROR: Final = "error"
 STATUS_RUNNING: Final = "running"

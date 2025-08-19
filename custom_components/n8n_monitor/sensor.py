@@ -9,7 +9,7 @@ from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo, DeviceEntryType
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -70,6 +70,7 @@ async def async_setup_entry(
     
     # Create entities
     entities = [
+        N8nInfoSensor(config_entry),
         N8nWorkflowsSensor(workflows_coordinator, config_entry),
         N8nExecutionsSensor(executions_coordinator, config_entry),
     ]
@@ -106,7 +107,52 @@ class N8nBaseSensor(CoordinatorEntity, SensorEntity):
             model="n8n Workflow Automation",
             sw_version=DEVICE_SW_VERSION,
             configuration_url="https://github.com/pageskr/ha-n8n-monitor",
+            entry_type=DeviceEntryType.SERVICE,
         )
+
+
+class N8nInfoSensor(SensorEntity):
+    """n8n service info sensor."""
+    
+    _attr_has_entity_name = True
+    _attr_name = "Info"
+    _attr_icon = "mdi:information"
+    
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize the sensor."""
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_info"
+        self._attr_device_info = self._get_device_info()
+    
+    def _get_device_info(self) -> DeviceInfo:
+        """Get device information."""
+        device_name = self._config_entry.data.get(
+            CONF_DEVICE_NAME,
+            f"n8n ({self._config_entry.data[CONF_URL]})"
+        )
+        
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._config_entry.entry_id)},
+            name=device_name,
+            manufacturer=MANUFACTURER,
+            model="n8n Workflow Automation",
+            sw_version=DEVICE_SW_VERSION,
+            configuration_url="https://github.com/pageskr/ha-n8n-monitor",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+    
+    @property
+    def native_value(self) -> str:
+        """Return the state of the sensor."""
+        return self._config_entry.data[CONF_URL]
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the state attributes."""
+        return {
+            "url": self._config_entry.data[CONF_URL],
+            "device_name": self._config_entry.data.get(CONF_DEVICE_NAME),
+        }
 
 
 class N8nWorkflowsSensor(N8nBaseSensor):
@@ -141,6 +187,7 @@ class N8nWorkflowsSensor(N8nBaseSensor):
         return {
             "items": self.coordinator.data.get("items", []),
             "total": self.coordinator.data.get("total", 0),
+            "active": self.coordinator.data.get("active", 0),
             "generated_at": self.coordinator.data.get("generated_at"),
             "execution_hours": self.coordinator.data.get("execution_hours"),
         }
