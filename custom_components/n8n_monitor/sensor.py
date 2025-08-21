@@ -52,6 +52,7 @@ async def async_setup_entry(
         hass,
         api,
         window_hours,
+        page_size,
         timedelta(seconds=scan_interval),
     )
     
@@ -64,9 +65,13 @@ async def async_setup_entry(
         timedelta(seconds=scan_interval),
     )
     
-    # Fetch initial data
-    await workflows_coordinator.async_config_entry_first_refresh()
+    # Link coordinators for data sharing
+    executions_coordinator.set_workflows_coordinator(workflows_coordinator)
+    workflows_coordinator.set_executions_data({})  # Initialize with empty data
+    
+    # Fetch initial data - executions first so workflows can use the data
     await executions_coordinator.async_config_entry_first_refresh()
+    await workflows_coordinator.async_config_entry_first_refresh()
     
     # Create entities
     entities = [

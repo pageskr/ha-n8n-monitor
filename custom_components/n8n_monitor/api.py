@@ -34,6 +34,17 @@ class N8nApi:
         parsed_url = urlparse(self.url)
         self.is_https = parsed_url.scheme == "https"
         
+        # Pre-create SSL context outside event loop
+        if self.is_https:
+            if self.verify_ssl:
+                self.ssl_context = ssl.create_default_context(cafile=certifi.where())
+            else:
+                self.ssl_context = ssl.create_default_context()
+                self.ssl_context.check_hostname = False
+                self.ssl_context.verify_mode = ssl.CERT_NONE
+        else:
+            self.ssl_context = False
+        
         _LOGGER.info("Initialized N8nApi with URL: %s (HTTPS: %s)", self.url, self.is_https)
     
     async def _request(
@@ -53,23 +64,16 @@ class N8nApi:
         url = f"{self.url}{endpoint}"
         
         _LOGGER.info("Making %s request to %s", method, url)
+        if params:
+            _LOGGER.debug("Request params: %s", params)
         
         # Create timeout
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         
         # Configure connector based on protocol
         if self.is_https:
-            # HTTPS - handle SSL
-            if self.verify_ssl:
-                ssl_context = ssl.create_default_context(cafile=certifi.where())
-            else:
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-            
-            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            connector = aiohttp.TCPConnector(ssl=self.ssl_context)
         else:
-            # HTTP - no SSL, basic connector
             connector = aiohttp.TCPConnector(ssl=False)
         
         try:
@@ -168,12 +172,13 @@ class N8nApi:
         workflow_id: str | None = None,
         limit: int = 100,
         cursor: str | None = None,
+        started_after: str | None = None,
     ) -> dict[str, Any] | None:
         """Get executions from n8n with pagination support."""
         params = {
             "limit": limit,
-            # Include minimal data to get workflow name and error info
-            "includeData": "true",
+            # Don't include data to avoid large responses
+            "includeData": "false",
         }
         
         if status:
@@ -182,6 +187,8 @@ class N8nApi:
             params["workflowId"] = workflow_id
         if cursor:
             params["cursor"] = cursor
+        if started_after:
+            params["startedAfter"] = started_after
         
         result = await self._request(
             "GET",
@@ -219,6 +226,7 @@ class N8nApi:
         workflow_id: str | None = None,
         limit: int = 100,
         max_pages: int = 10,
+        started_after: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get all executions with pagination."""
         all_executions = []
@@ -231,6 +239,7 @@ class N8nApi:
                 workflow_id=workflow_id,
                 limit=limit,
                 cursor=cursor,
+                started_after=started_after,
             )
             
             if not result or not result.get("data"):
@@ -244,5 +253,8 @@ class N8nApi:
                 break
             
             page += 1
+            _LOGGER.debug("Fetched page %d/%d with %d executions", 
+                         page, max_pages, len(result["data"]))
         
+        _LOGGER.debug("Total executions fetched: %d", len(all_executions))
         return all_executions
