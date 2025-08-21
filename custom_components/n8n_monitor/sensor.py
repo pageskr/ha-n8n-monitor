@@ -47,12 +47,11 @@ async def async_setup_entry(
     page_size = config_entry.options.get(CONF_PAGE_SIZE, DEFAULT_PAGE_SIZE)
     attr_limit = config_entry.options.get(CONF_ATTR_LIMIT, DEFAULT_ATTR_LIMIT)
     
-    # Create coordinators
+    # Create coordinators - note the different parameters for each
     workflows_coordinator = N8nWorkflowsCoordinator(
         hass,
         api,
         window_hours,
-        page_size,
         timedelta(seconds=scan_interval),
     )
     
@@ -65,13 +64,9 @@ async def async_setup_entry(
         timedelta(seconds=scan_interval),
     )
     
-    # Link coordinators for data sharing
-    executions_coordinator.set_workflows_coordinator(workflows_coordinator)
-    workflows_coordinator.set_executions_data({})  # Initialize with empty data
-    
-    # Fetch initial data - executions first so workflows can use the data
-    await executions_coordinator.async_config_entry_first_refresh()
+    # Fetch initial data
     await workflows_coordinator.async_config_entry_first_refresh()
+    await executions_coordinator.async_config_entry_first_refresh()
     
     # Create entities
     entities = [
