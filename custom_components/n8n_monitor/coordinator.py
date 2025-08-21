@@ -45,12 +45,12 @@ def get_status_key(status: str | None) -> str:
     
     status_lower = status.lower()
     
-    # Map various status values to our constants
-    if status_lower in ["success", "finished"]:
+    # Map n8n status values to our constants
+    if status_lower == "success":
         return STATUS_SUCCESS
-    elif status_lower in ["error", "failed", "crashed"]:
+    elif status_lower == "error":
         return STATUS_ERROR
-    elif status_lower in ["running", "executing", "new"]:
+    elif status_lower in ["running", "executing", "new", "waiting"]:
         return STATUS_RUNNING
     elif status_lower in ["canceled", "cancelled", "stopped"]:
         return STATUS_CANCELED
@@ -67,7 +67,6 @@ class N8nWorkflowsCoordinator(DataUpdateCoordinator):
         hass: HomeAssistant,
         api: N8nApi,
         window_hours: int,
-        page_size: int,
         update_interval: timedelta,
     ) -> None:
         """Initialize the coordinator."""
@@ -79,13 +78,6 @@ class N8nWorkflowsCoordinator(DataUpdateCoordinator):
         )
         self.api = api
         self.window_hours = window_hours
-        self.page_size = page_size
-        # Store shared executions data
-        self._executions_data = None
-    
-    def set_executions_data(self, data: dict[str, Any]) -> None:
-        """Set executions data from executions coordinator."""
-        self._executions_data = data
     
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -98,26 +90,34 @@ class N8nWorkflowsCoordinator(DataUpdateCoordinator):
             
             # Get current time and window start in UTC
             now = datetime.now(timezone.utc)
+            window_start = now - timedelta(hours=self.window_hours)
             
-            # Use executions data if available
+            # Get recent executions (without time filter in API)
+            all_executions = await self.api.get_executions_paginated(
+                limit=250,
+                max_pages=5,  # Get up to 1250 executions
+                include_data=False,  # Don't need full data for counting
+            )
+            
+            _LOGGER.debug("Fetched %d total executions", len(all_executions))
+            
+            # Filter executions by time window and group by workflow
             executions_by_workflow = defaultdict(list)
+            executions_in_window = 0
             
-            if self._executions_data:
-                # Use shared executions data
-                for status_key in [STATUS_SUCCESS, STATUS_ERROR, STATUS_RUNNING, STATUS_CANCELED, STATUS_UNKNOWN]:
-                    status_data = self._executions_data.get(status_key, {})
-                    items = status_data.get("items", [])
-                    for execution in items:
-                        workflow_id = execution.get("workflowId")
-                        if workflow_id:
-                            exec_data = {
-                                "status": status_key,
-                                "startedAt": execution.get("startedAt"),
-                                "workflowId": workflow_id,
-                            }
-                            executions_by_workflow[workflow_id].append(exec_data)
+            for execution in all_executions:
+                exec_time = parse_datetime(execution.get("startedAt"))
+                if not exec_time:
+                    continue
                 
-                _LOGGER.debug("Using shared executions data for %d workflows", len(executions_by_workflow))
+                # Only include executions within our time window
+                if exec_time >= window_start:
+                    workflow_id = execution.get("workflowId")
+                    if workflow_id:
+                        executions_by_workflow[workflow_id].append(execution)
+                        executions_in_window += 1
+            
+            _LOGGER.debug("Executions in window (%dh): %d", self.window_hours, executions_in_window)
             
             # Process workflows
             processed_workflows = []
@@ -144,17 +144,17 @@ class N8nWorkflowsCoordinator(DataUpdateCoordinator):
                 
                 last_execution_time = None
                 
+                # Count executions by status
                 for execution in workflow_executions:
-                    # Parse execution time
-                    exec_time = parse_datetime(execution.get("startedAt"))
-                    if exec_time:
-                        # Update last execution time
-                        if last_execution_time is None or exec_time > last_execution_time:
-                            last_execution_time = exec_time
+                    # Get status
+                    status = execution.get("status")
+                    status_key = get_status_key(status)
+                    recent_counts[status_key] += 1
                     
-                    # Count by status (already normalized in executions data)
-                    status = execution.get("status", STATUS_UNKNOWN)
-                    recent_counts[status] += 1
+                    # Track last execution time
+                    exec_time = parse_datetime(execution.get("startedAt"))
+                    if exec_time and (last_execution_time is None or exec_time > last_execution_time):
+                        last_execution_time = exec_time
                 
                 # Add processed workflow
                 processed_workflow = {
@@ -206,14 +206,8 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
         )
         self.api = api
         self.window_hours = window_hours
-        self.page_size = page_size
+        self.page_size = min(page_size, 250)  # API limit
         self.attr_limit = attr_limit
-        # Reference to workflows coordinator
-        self._workflows_coordinator = None
-    
-    def set_workflows_coordinator(self, coordinator: N8nWorkflowsCoordinator) -> None:
-        """Set reference to workflows coordinator."""
-        self._workflows_coordinator = coordinator
     
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
@@ -222,100 +216,117 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
             now = datetime.now(timezone.utc)
             window_start = now - timedelta(hours=self.window_hours)
             
-            # Convert window_start to ISO format for API
-            started_after = window_start.isoformat()
-            
             # Initialize data structure
             executions_by_status = defaultdict(list)
             
-            # Calculate max pages based on expected executions
-            # Assuming average 50 executions per hour, calculate pages needed
-            expected_executions = self.window_hours * 50
-            max_pages = max(5, min(20, (expected_executions // self.page_size) + 2))
+            # Fetch executions with pagination
+            cursor = None
+            pages_fetched = 0
+            max_pages = 20  # Safety limit
+            total_fetched = 0
+            executions_in_window = 0
             
-            _LOGGER.debug("Starting to fetch executions with window %d hours (after %s)", 
-                         self.window_hours, started_after)
+            _LOGGER.debug("Starting to fetch executions with window %d hours", self.window_hours)
             
-            # Fetch all executions within window
-            all_executions = await self.api.get_executions_paginated(
-                limit=self.page_size,
-                max_pages=max_pages,
-                started_after=started_after,
-            )
+            while pages_fetched < max_pages:
+                result = await self.api.get_executions(
+                    limit=self.page_size,
+                    cursor=cursor,
+                    include_data=True,  # Need data for error messages and workflow names
+                )
+                
+                if not result or not result.get("data"):
+                    _LOGGER.debug("No more executions to fetch")
+                    break
+                
+                page_executions = result["data"]
+                total_fetched += len(page_executions)
+                _LOGGER.debug("Fetched %d executions on page %d (total: %d)", 
+                            len(page_executions), pages_fetched + 1, total_fetched)
+                
+                # Process executions
+                all_outside_window = True
+                
+                for execution in page_executions:
+                    # Parse execution time
+                    exec_time = parse_datetime(execution.get("startedAt"))
+                    if not exec_time:
+                        continue
+                    
+                    # Check if within window
+                    if exec_time >= window_start:
+                        all_outside_window = False
+                        executions_in_window += 1
+                        
+                        # Get status and normalize it
+                        status = execution.get("status")
+                        status_key = get_status_key(status)
+                        
+                        # Calculate duration
+                        duration_ms = None
+                        finished_at = execution.get("finishedAt") or execution.get("stoppedAt")
+                        if finished_at:
+                            stopped_at = parse_datetime(finished_at)
+                            if stopped_at and exec_time:
+                                duration_ms = int((stopped_at - exec_time).total_seconds() * 1000)
+                        
+                        # Get workflow name from execution data
+                        workflow_name = "Unknown"
+                        if execution.get("data") and isinstance(execution["data"], dict):
+                            workflow_data = execution["data"].get("workflowData", {})
+                            if isinstance(workflow_data, dict):
+                                workflow_name = workflow_data.get("name", "Unknown")
+                        
+                        # Add to appropriate list
+                        exec_data = {
+                            "id": execution.get("id"),
+                            "workflowId": execution.get("workflowId"),
+                            "workflowName": workflow_name,
+                            "startedAt": execution.get("startedAt"),
+                            "finishedAt": finished_at,
+                            "duration_ms": duration_ms,
+                        }
+                        
+                        # Add error message for failed executions
+                        if status_key == STATUS_ERROR:
+                            error_msg = "Unknown error"
+                            if execution.get("data") and isinstance(execution["data"], dict):
+                                result_data = execution["data"].get("resultData", {})
+                                if isinstance(result_data, dict):
+                                    error_obj = result_data.get("error")
+                                    if isinstance(error_obj, dict):
+                                        error_msg = error_obj.get("message", "Unknown error")
+                                    elif isinstance(error_obj, str):
+                                        error_msg = error_obj
+                                    
+                                    # Also check for lastNodeExecuted for more context
+                                    last_node = result_data.get("lastNodeExecuted")
+                                    if last_node and error_msg == "Unknown error":
+                                        error_msg = f"Error at node: {last_node}"
+                            
+                            exec_data["error"] = error_msg
+                        
+                        executions_by_status[status_key].append(exec_data)
+                        
+                        if status_key == STATUS_UNKNOWN:
+                            _LOGGER.debug("Unknown status for execution %s: %s", 
+                                        execution.get("id"), status)
+                
+                # If all executions in this page are outside the window, we can stop
+                # (assuming executions are sorted by startedAt descending)
+                if all_outside_window and pages_fetched > 0:
+                    _LOGGER.debug("All executions in page are outside window, stopping pagination")
+                    break
+                
+                # Check for next cursor
+                cursor = result.get("nextCursor")
+                if not cursor:
+                    break
+                
+                pages_fetched += 1
             
-            _LOGGER.debug("Fetched total %d executions", len(all_executions))
-            
-            # Get workflow names if needed
-            workflow_names = {}
-            if all_executions:
-                # Get unique workflow IDs
-                workflow_ids = set()
-                for execution in all_executions:
-                    workflow_id = execution.get("workflowId")
-                    if workflow_id:
-                        workflow_ids.add(workflow_id)
-                
-                # Try to get workflow names from workflow data
-                if self._workflows_coordinator and self._workflows_coordinator.data:
-                    workflows = self._workflows_coordinator.data.get("items", [])
-                    for workflow in workflows:
-                        workflow_names[workflow["id"]] = workflow["name"]
-                else:
-                    # Fallback: get workflow names from API
-                    workflows = await self.api.get_workflows()
-                    if workflows:
-                        for workflow in workflows:
-                            workflow_names[workflow.get("id")] = workflow.get("name", "Unknown")
-            
-            # Process executions
-            for execution in all_executions:
-                # Get status and normalize it
-                status = execution.get("status")
-                status_key = get_status_key(status)
-                
-                # Get workflow info
-                workflow_id = execution.get("workflowId")
-                workflow_name = workflow_names.get(workflow_id, "Unknown")
-                
-                # Parse times
-                started_at = execution.get("startedAt")
-                stopped_at = execution.get("stoppedAt")
-                exec_time = parse_datetime(started_at)
-                
-                # Calculate duration
-                duration_ms = None
-                if stopped_at and started_at:
-                    stopped_time = parse_datetime(stopped_at)
-                    if stopped_time and exec_time:
-                        duration_ms = int((stopped_time - exec_time).total_seconds() * 1000)
-                
-                # Add to appropriate list
-                exec_data = {
-                    "id": execution.get("id"),
-                    "workflowId": workflow_id,
-                    "workflowName": workflow_name,
-                    "startedAt": started_at,
-                    "finishedAt": stopped_at,
-                    "duration_ms": duration_ms,
-                }
-                
-                # Add error message for failed executions if available
-                if status_key == STATUS_ERROR and execution.get("data"):
-                    error_msg = "Unknown error"
-                    if isinstance(execution.get("data"), dict):
-                        result_error = execution["data"].get("resultData", {}).get("error")
-                        if result_error:
-                            if isinstance(result_error, dict):
-                                error_msg = result_error.get("message", "Unknown error")
-                            else:
-                                error_msg = str(result_error)
-                    exec_data["error"] = error_msg
-                
-                executions_by_status[status_key].append(exec_data)
-                
-                if status_key == STATUS_UNKNOWN:
-                    _LOGGER.debug("Unknown status for execution %s: %s", 
-                                execution.get("id"), status)
+            _LOGGER.debug("Total executions fetched: %d, in window: %d", 
+                         total_fetched, executions_in_window)
             
             # Prepare final data with trimming
             final_data = {
@@ -350,17 +361,13 @@ class N8nExecutionsCoordinator(DataUpdateCoordinator):
                 **final_data,
             }
             
-            _LOGGER.debug("Execution summary - Total: %d, Success: %d, Error: %d, Running: %d, Canceled: %d, Unknown: %d",
-                         total,
-                         len(executions_by_status.get(STATUS_SUCCESS, [])),
-                         len(executions_by_status.get(STATUS_ERROR, [])),
-                         len(executions_by_status.get(STATUS_RUNNING, [])),
-                         len(executions_by_status.get(STATUS_CANCELED, [])),
-                         len(executions_by_status.get(STATUS_UNKNOWN, [])))
-            
-            # Share data with workflows coordinator
-            if self._workflows_coordinator:
-                self._workflows_coordinator.set_executions_data(final_data)
+            _LOGGER.info("Execution summary - Total: %d, Success: %d, Error: %d, Running: %d, Canceled: %d, Unknown: %d",
+                        total,
+                        len(executions_by_status.get(STATUS_SUCCESS, [])),
+                        len(executions_by_status.get(STATUS_ERROR, [])),
+                        len(executions_by_status.get(STATUS_RUNNING, [])),
+                        len(executions_by_status.get(STATUS_CANCELED, [])),
+                        len(executions_by_status.get(STATUS_UNKNOWN, [])))
             
             return result
             
