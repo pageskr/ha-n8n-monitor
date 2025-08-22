@@ -201,8 +201,12 @@ class N8nApi:
             # Log sample execution to debug status values
             if result.get("data") and len(result["data"]) > 0:
                 sample = result["data"][0]
-                _LOGGER.debug("Sample execution - ID: %s, Status: %s, Started: %s", 
-                            sample.get("id"), sample.get("status"), sample.get("startedAt"))
+                _LOGGER.info("Sample execution - ID: %s, Status: '%s', Started: %s, WorkflowId: %s", 
+                            sample.get("id"), sample.get("status"), sample.get("startedAt"), sample.get("workflowId"))
+                # Log data structure for debugging
+                if sample.get("data"):
+                    data_keys = list(sample["data"].keys()) if isinstance(sample["data"], dict) else "not dict"
+                    _LOGGER.debug("Execution data keys: %s", data_keys)
             return result
         elif isinstance(result, list):
             _LOGGER.debug("Executions returned as list with %d items", len(result))

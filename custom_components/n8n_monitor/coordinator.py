@@ -46,16 +46,17 @@ def get_status_key(status: str | None) -> str:
     status_lower = status.lower()
     
     # Map n8n status values to our constants
+    # Based on n8n API: "error" | "success" | "waiting"
     if status_lower == "success":
         return STATUS_SUCCESS
     elif status_lower == "error":
         return STATUS_ERROR
     elif status_lower in ["running", "executing", "new", "waiting"]:
         return STATUS_RUNNING
-    elif status_lower in ["canceled", "cancelled", "stopped"]:
+    elif status_lower in ["canceled", "cancelled", "stopped", "crash", "crashed"]:
         return STATUS_CANCELED
     else:
-        _LOGGER.debug("Unknown status: %s", status)
+        _LOGGER.warning("Unknown execution status: '%s'", status)
         return STATUS_UNKNOWN
 
 
@@ -101,11 +102,19 @@ class N8nSharedDataCoordinator(DataUpdateCoordinator):
             
             _LOGGER.debug("Fetched %d workflows", len(workflows))
             
+            # Create workflow ID to name mapping
+            workflow_names = {}
+            for workflow in workflows:
+                workflow_id = workflow.get("id")
+                workflow_name = workflow.get("name", "Unknown")
+                if workflow_id:
+                    workflow_names[str(workflow_id)] = workflow_name
+            
             # 2. Fetch executions ONCE with configured limit
             all_executions = []
             result = await self.api.get_executions(
                 limit=self.page_size,
-                include_data=True,  # Need data for error messages and workflow names
+                include_data=True,  # Need data for error messages
             )
             
             if result and result.get("data"):
@@ -113,19 +122,31 @@ class N8nSharedDataCoordinator(DataUpdateCoordinator):
             
             _LOGGER.info("Fetched %d executions in single API call", len(all_executions))
             
+            # Log sample execution for debugging
+            if all_executions:
+                sample = all_executions[0]
+                _LOGGER.debug("Sample execution - ID: %s, Status: '%s', WorkflowId: %s", 
+                            sample.get("id"), sample.get("status"), sample.get("workflowId"))
+            
             # 3. Filter executions by time window
             executions_in_window = []
+            status_counts = defaultdict(int)
+            
             for execution in all_executions:
                 exec_time = parse_datetime(execution.get("startedAt"))
                 if exec_time and exec_time >= window_start:
                     executions_in_window.append(execution)
+                    # Count status for debugging
+                    status = execution.get("status", "none")
+                    status_counts[status] += 1
             
-            _LOGGER.debug("Executions in window (%dh): %d", self.window_hours, len(executions_in_window))
+            _LOGGER.info("Executions in window (%dh): %d", self.window_hours, len(executions_in_window))
+            _LOGGER.debug("Raw status counts: %s", dict(status_counts))
             
             # 4. Process workflows data
             executions_by_workflow = defaultdict(list)
             for execution in executions_in_window:
-                workflow_id = execution.get("workflowId")
+                workflow_id = str(execution.get("workflowId", ""))
                 if workflow_id:
                     executions_by_workflow[workflow_id].append(execution)
             
@@ -133,7 +154,7 @@ class N8nSharedDataCoordinator(DataUpdateCoordinator):
             active_count = 0
             
             for workflow in workflows:
-                workflow_id = workflow.get("id")
+                workflow_id = str(workflow.get("id", ""))
                 workflow_name = workflow.get("name", "Unknown")
                 is_active = workflow.get("active", False)
                 
@@ -206,17 +227,25 @@ class N8nSharedDataCoordinator(DataUpdateCoordinator):
                     if stopped_at and exec_time:
                         duration_ms = int((stopped_at - exec_time).total_seconds() * 1000)
                 
-                # Get workflow name from execution data
-                workflow_name = "Unknown"
-                if execution.get("data") and isinstance(execution["data"], dict):
-                    workflow_data = execution["data"].get("workflowData", {})
-                    if isinstance(workflow_data, dict):
-                        workflow_name = workflow_data.get("name", "Unknown")
+                # Get workflow name - try multiple sources
+                workflow_id = str(execution.get("workflowId", ""))
+                workflow_name = workflow_names.get(workflow_id, "Unknown")
+                
+                # If still unknown, try to get from execution data
+                if workflow_name == "Unknown" and execution.get("data"):
+                    if isinstance(execution["data"], dict):
+                        # Try workflowData.name
+                        workflow_data = execution["data"].get("workflowData")
+                        if isinstance(workflow_data, dict) and workflow_data.get("name"):
+                            workflow_name = workflow_data["name"]
+                        # Try data.name as fallback
+                        elif execution["data"].get("name"):
+                            workflow_name = execution["data"]["name"]
                 
                 # Add to appropriate list
                 exec_data = {
                     "id": execution.get("id"),
-                    "workflowId": execution.get("workflowId"),
+                    "workflowId": workflow_id,
                     "workflowName": workflow_name,
                     "startedAt": execution.get("startedAt"),
                     "finishedAt": finished_at,
@@ -227,6 +256,7 @@ class N8nSharedDataCoordinator(DataUpdateCoordinator):
                 if status_key == STATUS_ERROR:
                     error_msg = "Unknown error"
                     if execution.get("data") and isinstance(execution["data"], dict):
+                        # Try to get error from resultData
                         result_data = execution["data"].get("resultData", {})
                         if isinstance(result_data, dict):
                             error_obj = result_data.get("error")
@@ -239,6 +269,13 @@ class N8nSharedDataCoordinator(DataUpdateCoordinator):
                             last_node = result_data.get("lastNodeExecuted")
                             if last_node and error_msg == "Unknown error":
                                 error_msg = f"Error at node: {last_node}"
+                        
+                        # Try to get error from data.error as fallback
+                        elif execution["data"].get("error"):
+                            if isinstance(execution["data"]["error"], dict):
+                                error_msg = execution["data"]["error"].get("message", "Unknown error")
+                            else:
+                                error_msg = str(execution["data"]["error"])
                     
                     exec_data["error"] = error_msg
                 
@@ -279,6 +316,12 @@ class N8nSharedDataCoordinator(DataUpdateCoordinator):
             
             _LOGGER.info("Data update complete - Workflows: %d, Executions in window: %d",
                         len(workflows), total)
+            _LOGGER.info("Execution status breakdown - Success: %d, Error: %d, Running: %d, Canceled: %d, Unknown: %d",
+                        len(executions_by_status.get(STATUS_SUCCESS, [])),
+                        len(executions_by_status.get(STATUS_ERROR, [])),
+                        len(executions_by_status.get(STATUS_RUNNING, [])),
+                        len(executions_by_status.get(STATUS_CANCELED, [])),
+                        len(executions_by_status.get(STATUS_UNKNOWN, [])))
             
             # Return combined data
             return {
