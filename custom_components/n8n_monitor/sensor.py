@@ -27,7 +27,7 @@ from .const import (
     DEFAULT_PAGE_SIZE,
     DEFAULT_ATTR_LIMIT,
 )
-from .coordinator import N8nWorkflowsCoordinator, N8nExecutionsCoordinator
+from .coordinator import N8nSharedDataCoordinator, N8nWorkflowsCoordinator, N8nExecutionsCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,15 +47,8 @@ async def async_setup_entry(
     page_size = config_entry.options.get(CONF_PAGE_SIZE, DEFAULT_PAGE_SIZE)
     attr_limit = config_entry.options.get(CONF_ATTR_LIMIT, DEFAULT_ATTR_LIMIT)
     
-    # Create coordinators - note the different parameters for each
-    workflows_coordinator = N8nWorkflowsCoordinator(
-        hass,
-        api,
-        window_hours,
-        timedelta(seconds=scan_interval),
-    )
-    
-    executions_coordinator = N8nExecutionsCoordinator(
+    # Create shared data coordinator that fetches data once
+    shared_coordinator = N8nSharedDataCoordinator(
         hass,
         api,
         window_hours,
@@ -64,15 +57,29 @@ async def async_setup_entry(
         timedelta(seconds=scan_interval),
     )
     
-    # Fetch initial data
-    await workflows_coordinator.async_config_entry_first_refresh()
-    await executions_coordinator.async_config_entry_first_refresh()
+    # Create individual coordinators that use shared data
+    workflows_coordinator = N8nWorkflowsCoordinator(
+        hass,
+        shared_coordinator,
+    )
+    
+    executions_coordinator = N8nExecutionsCoordinator(
+        hass,
+        shared_coordinator,
+    )
+    
+    # Fetch initial data once
+    await shared_coordinator.async_config_entry_first_refresh()
+    
+    # Update individual coordinators with shared data
+    await workflows_coordinator.async_refresh()
+    await executions_coordinator.async_refresh()
     
     # Create entities
     entities = [
         N8nInfoSensor(config_entry),
-        N8nWorkflowsSensor(workflows_coordinator, config_entry),
-        N8nExecutionsSensor(executions_coordinator, config_entry),
+        N8nWorkflowsSensor(workflows_coordinator, config_entry, shared_coordinator),
+        N8nExecutionsSensor(executions_coordinator, config_entry, shared_coordinator),
     ]
     
     async_add_entities(entities)
@@ -87,9 +94,11 @@ class N8nBaseSensor(CoordinatorEntity, SensorEntity):
         self,
         coordinator: N8nWorkflowsCoordinator | N8nExecutionsCoordinator,
         config_entry: ConfigEntry,
+        shared_coordinator: N8nSharedDataCoordinator,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        super().__init__(shared_coordinator)  # Use shared coordinator for updates
+        self.data_coordinator = coordinator  # Keep reference to data coordinator
         self._config_entry = config_entry
         self._attr_device_info = self._get_device_info()
     
@@ -166,30 +175,31 @@ class N8nWorkflowsSensor(N8nBaseSensor):
         self,
         coordinator: N8nWorkflowsCoordinator,
         config_entry: ConfigEntry,
+        shared_coordinator: N8nSharedDataCoordinator,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, config_entry)
+        super().__init__(coordinator, config_entry, shared_coordinator)
         self._attr_unique_id = f"{config_entry.entry_id}_workflows"
     
     @property
     def native_value(self) -> int | None:
         """Return the state of the sensor."""
-        if self.coordinator.data:
-            return self.coordinator.data.get("total", 0)
+        if self.data_coordinator.data:
+            return self.data_coordinator.data.get("total", 0)
         return None
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
-        if not self.coordinator.data:
+        if not self.data_coordinator.data:
             return {}
         
         return {
-            "items": self.coordinator.data.get("items", []),
-            "total": self.coordinator.data.get("total", 0),
-            "active": self.coordinator.data.get("active", 0),
-            "generated_at": self.coordinator.data.get("generated_at"),
-            "execution_hours": self.coordinator.data.get("execution_hours"),
+            "items": self.data_coordinator.data.get("items", []),
+            "total": self.data_coordinator.data.get("total", 0),
+            "active": self.data_coordinator.data.get("active", 0),
+            "generated_at": self.data_coordinator.data.get("generated_at"),
+            "execution_hours": self.data_coordinator.data.get("execution_hours"),
         }
 
 
@@ -204,25 +214,26 @@ class N8nExecutionsSensor(N8nBaseSensor):
         self,
         coordinator: N8nExecutionsCoordinator,
         config_entry: ConfigEntry,
+        shared_coordinator: N8nSharedDataCoordinator,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, config_entry)
+        super().__init__(coordinator, config_entry, shared_coordinator)
         self._attr_unique_id = f"{config_entry.entry_id}_executions"
     
     @property
     def native_value(self) -> int | None:
         """Return the state of the sensor."""
-        if self.coordinator.data:
-            return self.coordinator.data.get("total", 0)
+        if self.data_coordinator.data:
+            return self.data_coordinator.data.get("total", 0)
         return None
     
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
-        if not self.coordinator.data:
+        if not self.data_coordinator.data:
             return {}
         
         # Return all data except total (which is the state)
-        attrs = dict(self.coordinator.data)
+        attrs = dict(self.data_coordinator.data)
         attrs.pop("total", None)
         return attrs

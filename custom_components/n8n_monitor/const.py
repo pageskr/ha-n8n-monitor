@@ -41,4 +41,4 @@ STATUS_CANCELED: Final = "canceled"
 STATUS_UNKNOWN: Final = "unknown"
 
 # Device info
-DEVICE_SW_VERSION: Final = "1.1.0"
+DEVICE_SW_VERSION: Final = "1.2.0"
